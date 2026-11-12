@@ -1,7 +1,9 @@
 -- VendorPoint: Vendor and Repair icons on the bag window, plus an optional floating frame.
 -- A click pins the nearest friendly NPC of that kind on the map, named, through WaypointUI when it's installed.
--- Shift-click pins the next-nearest one. NPC flags and spawns come from QuestieDB.
-local ADDON = ...
+-- Shift-click pins the next one, right-click hides the one pinned. NPC flags and spawns come
+-- from QuestieDB. The pick: the nearest few as the bird flies, then ranked by the walk there
+-- (Nav.lua: terrain, walls and roads), with a nudge for your own zone and for towns.
+local ADDON, VP = ...
 local NN = {}
 _G.VendorPoint = NN
 
@@ -118,7 +120,12 @@ local function Build(done)
 
   local masks = {}
   for _, k in ipairs(KINDS) do masks[k.key] = flags[k.flag] end
-  local out = { vendor = {}, repair = {} }
+  -- Townsfolk: several of these close together is a town or camp, with roads to it.
+  local serviceMask = 0
+  for _, f in ipairs({ "VENDOR", "REPAIR", "INNKEEPER", "FLIGHT_MASTER", "BANKER", "AUCTIONEER", "STABLEMASTER" }) do
+    if flags[f] then serviceMask = bit.bor(serviceMask, flags[f]) end
+  end
+  local out = { vendor = {}, repair = {}, service = {} }
   local ids = NpcDB.GetAllIds()
   local templates = QuestieFactionTemplates()
   local mine = UnitFactionGroup("player")
@@ -132,7 +139,8 @@ local function Build(done)
       if type(f) == "number" and f > 0 then
         local isVendor = masks.vendor and bit.band(f, masks.vendor) ~= 0
         local isRepair = masks.repair and bit.band(f, masks.repair) ~= 0
-        if isVendor or isRepair then
+        local isService = bit.band(f, serviceMask) ~= 0
+        if isService then
           local name = NpcDB.name(id)
           if type(name) == "string" and name ~= "" and name:sub(1, 5) ~= "[DND]"
             and FriendlyNpc(id, templates, myMask) then
@@ -150,6 +158,7 @@ local function Build(done)
                         local p = { id = id, name = name, uiMapID = uiMap, x = x, y = y, cont = cont, wx = wx, wy = wy }
                         if isVendor then out.vendor[#out.vendor + 1] = p end
                         if isRepair then out.repair[#out.repair + 1] = p end
+                        out.service[#out.service + 1] = p
                       end
                     end
                   end
@@ -193,14 +202,75 @@ local function ZoneName(uiMapID)
   return info and info.name or ("map " .. tostring(uiMapID))
 end
 
--- This continent's NPCs of `kind`, nearest first, one entry per NPC (its closest spawn).
--- nil plus a reason when there's no player position.
+-- The zone a map belongs to (a subzone or city climbs to its zone).
+local zoneOf = {}
+local function ZoneOf(uiMapID)
+  if not uiMapID then return nil end
+  local z = zoneOf[uiMapID]
+  if z == nil then
+    local info = C_Map.GetMapInfo(uiMapID)
+    local zoneType = Enum and Enum.UIMapType and Enum.UIMapType.Zone or 3
+    while info and info.mapType and info.mapType > zoneType and info.parentMapID and info.parentMapID > 0 do
+      info = C_Map.GetMapInfo(info.parentMapID)
+    end
+    z = info and info.mapID or uiMapID
+    zoneOf[uiMapID] = z
+  end
+  return z
+end
+
+-- Nav.lua's data is in UnitPosition's order (x north, y west). C_Map's world positions should
+-- be too; checked once against UnitPosition where the game gives it, swapped if not.
+local swapXY
+local function NavXY(x, y)
+  if swapXY == nil then
+    local ok, ux, uy = pcall(UnitPosition, "player")
+    local _, wx, wy = PlayerWorld()
+    if ok and type(ux) == "number" and type(uy) == "number" and wx then
+      swapXY = math.abs(ux - wy) + math.abs(uy - wx) < math.abs(ux - wx) + math.abs(uy - wy)
+    end
+  end
+  if swapXY then return y, x end
+  return x, y
+end
+
+local SHORTLIST = 8    -- this many nearest as the bird flies get their walk worked out
+local OTHER_ZONE = 1.1 -- a walk into another zone counts this much longer (zone edges are often ridges)
+local TOWN = 0.9       -- ... and one into a town or camp this much shorter
+local TOWN_YARDS = 80  -- townsfolk this close together make a town
+local NO_WALK = 3      -- no walk found: counts as this many times the bird's distance
+
+local function IsTown(cont, p)
+  local seen, n = {}, 0
+  for _, s in ipairs(places.service) do
+    if s.cont == cont and s.id ~= p.id and not seen[s.id]
+      and math.abs(s.wx - p.wx) < TOWN_YARDS and math.abs(s.wy - p.wy) < TOWN_YARDS
+      and (s.wx - p.wx) ^ 2 + (s.wy - p.wy) ^ 2 < TOWN_YARDS * TOWN_YARDS then
+      seen[s.id] = true
+      n = n + 1
+      if n >= 2 then return true end
+    end
+  end
+  return false
+end
+
+local function Hidden() return VendorPointDB and VendorPointDB.hidden or {} end
+
+-- This continent's NPCs of `kind`, best first, one entry per NPC (its nearest spawn):
+-- { place, dist (bird yards), walk (yards on foot, or nil), how ("direct" / "road"), town }.
+-- Remembered until you move ~10 yards. nil plus a reason when there's no player position.
+local rankCache = {}
+local hiddenStamp = 0
 local function Ranked(kind)
   local pc, px, py = PlayerWorld()
   if not pc then return nil, "Can't tell where you are here." end
+  local key = kind .. ":" .. pc .. ":" .. math.floor(px / 10) .. ":" .. math.floor(py / 10) .. ":" .. hiddenStamp
+  if rankCache[kind] and rankCache[kind].key == key then return rankCache[kind].list end
+
+  local hidden = Hidden()
   local best = {}
   for _, p in ipairs(places[kind]) do
-    if p.cont == pc then
+    if p.cont == pc and not hidden[p.id] then
       local d = math.sqrt((p.wx - px) ^ 2 + (p.wy - py) ^ 2)
       local b = best[p.id]
       if not b or d < b.dist then best[p.id] = { place = p, dist = d } end
@@ -209,7 +279,43 @@ local function Ranked(kind)
   local list = {}
   for _, e in pairs(best) do list[#list + 1] = e end
   table.sort(list, function(a, b) return a.dist < b.dist end)
+
+  local nav = VP.Nav and VP.Nav.Knows(pc) and VP.Nav.From(pc, NavXY(px, py))
+  local myZone = ZoneOf(C_Map.GetBestMapForUnit("player"))
+  local n = math.min(SHORTLIST, #list)
+  for i = 1, n do
+    local e = list[i]
+    local score = e.dist
+    if nav then
+      local ok, walk, how = pcall(nav.Walk, NavXY(e.place.wx, e.place.wy))
+      if ok then e.walk, e.how = walk, how end
+      e.noWalk = not e.walk
+      score = e.walk or e.dist * NO_WALK
+    end
+    if myZone and ZoneOf(e.place.uiMapID) ~= myZone then score = score * OTHER_ZONE end
+    e.town = IsTown(pc, e.place)
+    if e.town then score = score * TOWN end
+    e.score = score
+  end
+  local head = {}
+  for i = 1, n do head[i] = list[i] end
+  table.sort(head, function(a, b) return a.score < b.score end)
+  for i = 1, n do list[i] = head[i] end
+
+  rankCache[kind] = { key = key, list = list }
   return list
+end
+
+-- "140 yd" / "140 yd by road (90 direct)" / "90 yd, no walk found"
+local function Distance(e)
+  if not e.walk then
+    if e.noWalk then return string.format("%d yd, no walk found", e.dist) end
+    return string.format("%d yd", e.dist)
+  end
+  local s = string.format("%d yd", e.walk)
+  if e.how == "road" then s = s .. " by road" end
+  if e.walk > e.dist * 1.15 + 10 then s = s .. string.format(" (%d direct)", e.dist) end
+  return s
 end
 
 local function Pin(p)
@@ -236,6 +342,7 @@ end
 
 -- Shift-click steps down the list. It starts over on a plain click or after you move ~50 yards.
 local cycle = { kind = nil, index = 0, wx = nil, wy = nil }
+local lastPinned = {} -- [kind] = place, for right-click to hide
 
 local function PinNearest(kindInfo, next)
   local list, why = Ranked(kindInfo.key)
@@ -255,17 +362,36 @@ local function PinNearest(kindInfo, next)
   local e = list[cycle.index]
   local p = e.place
   if Pin(p) then
-    Print(string.format("%s #%d: %s, %s (%.0f, %.0f) - %d yd.", kindInfo.label, cycle.index, p.name,
-      ZoneName(p.uiMapID), p.x, p.y, e.dist))
+    lastPinned[kindInfo.key] = p
+    Print(string.format("%s #%d: %s, %s (%.0f, %.0f) - %s%s.", kindInfo.label, cycle.index, p.name,
+      ZoneName(p.uiMapID), p.x, p.y, Distance(e), e.town and ", in town" or ""))
   end
 end
 
-local function OnKindClick(kindInfo)
+-- Right-click: never pick this NPC again (the one last pinned, or else the current best),
+-- and pin the next one. /vp unhide brings them back.
+local function HideAndNext(kindInfo)
+  local p = lastPinned[kindInfo.key]
+  if not p then
+    local list = Ranked(kindInfo.key)
+    p = list and list[1] and list[1].place
+  end
+  if not p then return end
+  VendorPointDB.hidden = VendorPointDB.hidden or {}
+  VendorPointDB.hidden[p.id] = p.name
+  hiddenStamp = hiddenStamp + 1
+  lastPinned[kindInfo.key] = nil
+  Print(string.format("%s won't be picked again (/vp unhide to undo).", p.name))
+  PinNearest(kindInfo, false)
+end
+
+local function OnKindClick(kindInfo, button)
   local next = IsShiftKeyDown()
-  if places then PinNearest(kindInfo, next) return end
+  local run = button == "RightButton" and HideAndNext or function(k) PinNearest(k, next) end
+  if places then run(kindInfo) return end
   Print("Reading Questie's NPC list...")
   Build(function(ok, err)
-    if ok then PinNearest(kindInfo, next) else Print(err) end
+    if ok then run(kindInfo) else Print(err) end
   end)
 end
 
@@ -280,7 +406,7 @@ local function ShowTooltip(btn, kindInfo, anchor)
     if list and #list > 0 then
       for i = 1, math.min(3, #list) do
         local p = list[i].place
-        GameTooltip:AddDoubleLine(p.name, string.format("%s  %d yd", ZoneName(p.uiMapID), list[i].dist), 1, 1, 1, 0.8, 0.8, 0.8)
+        GameTooltip:AddDoubleLine(p.name, ZoneName(p.uiMapID) .. "  " .. Distance(list[i]), 1, 1, 1, 0.8, 0.8, 0.8)
       end
     else
       GameTooltip:AddLine("None on this continent.", 0.8, 0.8, 0.8)
@@ -289,6 +415,7 @@ local function ShowTooltip(btn, kindInfo, anchor)
     GameTooltip:AddLine("Click to look it up.", 0.8, 0.8, 0.8)
   end
   GameTooltip:AddLine("Click: pin the nearest. Shift-click: the next one.", 0.5, 0.8, 1, true)
+  GameTooltip:AddLine("Right-click: hide the pinned one and pin the next.", 0.5, 0.8, 1, true)
   GameTooltip:Show()
 end
 
@@ -474,7 +601,8 @@ local function CreateBagBar()
     b.icon:SetSize(16, 16)
     b.icon:SetPoint("CENTER")
     b.icon:SetTexture(BAG_ICONS[k.key])
-    b:SetScript("OnClick", function() OnKindClick(k) end)
+    b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    b:SetScript("OnClick", function(_, button) OnKindClick(k, button) end)
     b:SetScript("OnEnter", function(self) ShowTooltip(self, k, bagBar.tipAnchor) end)
     b:SetScript("OnLeave", function() GameTooltip:Hide() end)
     b:SetScript("OnMouseDown", function(self) self.icon:SetPoint("CENTER", 1, -1) end)
@@ -503,7 +631,8 @@ local function RegisterBaganator()
     if Baganator.Skins and Baganator.Skins.AddFrame then
       pcall(Baganator.Skins.AddFrame, "IconButton", b, { "vendorpoint" })
     end
-    b:SetScript("OnClick", function() OnKindClick(k) end)
+    b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    b:SetScript("OnClick", function(_, button) OnKindClick(k, button) end)
     b:SetScript("OnEnter", function(self) ShowTooltip(self, k, "ANCHOR_TOP") end)
     b:SetScript("OnLeave", function() GameTooltip:Hide() end)
     api.RegisterRegion("VendorPoint " .. k.label, "vendorpoint_" .. k.key, "backpack", "bottom_left", b)
@@ -556,7 +685,8 @@ local function CreateFloating()
     b:SetSize(78, 22)
     b:SetText(k.label)
     if prev then b:SetPoint("LEFT", prev, "RIGHT", 4, 0) else b:SetPoint("LEFT", frame, "LEFT", 6, 0) end
-    b:SetScript("OnClick", function() OnKindClick(k) end)
+    b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    b:SetScript("OnClick", function(_, button) OnKindClick(k, button) end)
     b:SetScript("OnEnter", function(self) ShowTooltip(self, k) end)
     b:SetScript("OnLeave", function() GameTooltip:Hide() end)
     b:RegisterForDrag("LeftButton")
@@ -579,6 +709,8 @@ ev:SetScript("OnEvent", function(self, event, arg1)
   if event == "ADDON_LOADED" and arg1 == ADDON then
     self:UnregisterEvent("ADDON_LOADED")
     VendorPointCharDB = VendorPointCharDB or {}
+    VendorPointDB = VendorPointDB or {}
+    VendorPointDB.hidden = VendorPointDB.hidden or {}
     VendorPointCharDB.hidden = nil -- 0.1.0 key, replaced by .floating
     local ok, err = pcall(CreateBagBar)
     if not ok then Print("Couldn't build the bag icons: " .. tostring(err)) end
@@ -606,6 +738,7 @@ end)
 
 local function Help()
   Print("/vp vendor | repair - pin the nearest")
+  Print("/vp hidden - list hidden NPCs; /vp unhide - bring them all back")
   Print("/vp side inside | bottom | top | left | right - where the bag icons sit")
   Print("/vp frame - show/hide the floating frame; /vp lock | unlock | reset")
 end
@@ -615,7 +748,15 @@ SLASH_VENDORPOINT2 = "/vendorpoint"
 SlashCmdList.VENDORPOINT = function(msg)
   msg = (msg or ""):lower():match("^%s*(.-)%s*$")
   local cmd, arg = msg:match("^(%S*)%s*(.-)$")
-  if cmd == "vendor" or cmd == "repair" then
+  if cmd == "hidden" then
+    local any = false
+    for id, name in pairs(VendorPointDB.hidden) do Print(string.format("hidden: %s (%d)", name, id)); any = true end
+    if not any then Print("Nothing hidden.") end
+  elseif cmd == "unhide" then
+    VendorPointDB.hidden = {}
+    hiddenStamp = hiddenStamp + 1
+    Print("Every hidden NPC can be picked again.")
+  elseif cmd == "vendor" or cmd == "repair" then
     for _, k in ipairs(KINDS) do if k.key == cmd then OnKindClick(k) end end
   elseif cmd == "side" then
     if arg == "header" or arg == "inside" then
