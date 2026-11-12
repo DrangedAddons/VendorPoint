@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.0
+
+- Blizzard's combined bags: the buttons now sit inside the window, left of the search box under the portrait. They shrink to fit the room the search box leaves.
+- Buttons on the outside edge of a bag window now draw above action bar art (the gryphons) instead of behind it.
+- `/vp side inside` puts the buttons back inside the bag window (`/vp side header` still works).
+
 ## 1.0.0
 
 First release, under the name VendorPoint (was NearestNPC while in testing).

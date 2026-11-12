@@ -356,6 +356,30 @@ local function PlaceInEUIHeader()
   return true
 end
 
+-- Blizzard's combined bags: in the gap left of the search box, under the portrait.
+-- Button width fits whatever room the search box leaves.
+local function PlaceInCombinedBags(target)
+  local search = _G.BagItemSearchBox
+  if not (search and search:IsVisible()) then return false end
+  local sl, tl = search:GetLeft(), target:GetLeft()
+  if not (sl and tl) or sl <= tl then return false end
+  local n = #bagBar.buttons
+  local room = sl - tl - 14            -- frame border on the left, gap before the search
+  local w = math.min(28, math.floor((room - 2 * (n - 1)) / n))
+  if w < 16 then return false end
+  bagBar:SetParent(target)
+  bagBar:ClearAllPoints()
+  bagBar:SetPoint("RIGHT", search, "LEFT", -8, 0)
+  bagBar:SetFrameLevel(target:GetFrameLevel() + 20)
+  bagBar:SetSize(w * n + 2 * (n - 1), 20)
+  LayoutButtons(w, 20, "LEFT", "RIGHT", 2, 0)
+  bagBar.tipAnchor = "ANCHOR_TOP"
+  bagBar:Show()
+  return true
+end
+
+local LOW_STRATA = { BACKGROUND = true, LOW = true, MEDIUM = true }
+
 local function Place()
   if not bagBar then return end
   local target
@@ -364,13 +388,18 @@ local function Place()
   end
   if not target then bagBar:Hide(); return end
 
-  if target == _G.EUI_MainBagFrame and not VendorPointCharDB.side and PlaceInEUIHeader() then return end
+  if not VendorPointCharDB.side then
+    if target == _G.EUI_MainBagFrame and PlaceInEUIHeader() then return end
+    if target == _G.ContainerFrameCombinedBags and PlaceInCombinedBags(target) then return end
+  end
 
   local s = Side()
   bagBar:SetParent(UIParent)
   bagBar:ClearAllPoints()
   bagBar:SetPoint(s[1], target, s[2], s[3], s[4])
-  bagBar:SetFrameStrata(target:GetFrameStrata())
+  -- Outside the window there's other UI around (action bar art). Sit above it.
+  local strata = target:GetFrameStrata()
+  bagBar:SetFrameStrata(LOW_STRATA[strata] and "HIGH" or strata)
   bagBar:SetFrameLevel(target:GetFrameLevel() + 20)
   if s[5] == "LEFT" then bagBar:SetSize(66, 24) else bagBar:SetSize(32, 50) end
   LayoutButtons(32, 24, s[5], s[6], s[7], s[8])
@@ -551,7 +580,7 @@ end)
 
 local function Help()
   Print("/vp vendor | repair - pin the nearest")
-  Print("/vp side header | bottom | top | left | right - where the bag icons sit")
+  Print("/vp side inside | bottom | top | left | right - where the bag icons sit")
   Print("/vp frame - show/hide the floating frame; /vp lock | unlock | reset")
 end
 
@@ -563,12 +592,12 @@ SlashCmdList.VENDORPOINT = function(msg)
   if cmd == "vendor" or cmd == "repair" then
     for _, k in ipairs(KINDS) do if k.key == cmd then OnKindClick(k) end end
   elseif cmd == "side" then
-    if arg == "header" then
-      VendorPointCharDB.side = nil; Place(); Print("Bag icons back in the EllesmereUI header (other bags: bottom edge).")
+    if arg == "header" or arg == "inside" then
+      VendorPointCharDB.side = nil; Place(); Print("Bag icons back inside the bag window where there's a spot for them.")
     elseif SIDES[arg] then
       VendorPointCharDB.side = arg; Place(); Print("Bag icons now sit " .. arg .. " of the bag window.")
     else
-      Print("/vp side header | bottom | top | left | right")
+      Print("/vp side inside | bottom | top | left | right")
     end
   elseif not frame then
     Print("The floating frame wasn't built. Check chat for the error from login.")

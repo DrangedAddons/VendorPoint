@@ -6,7 +6,9 @@ WoW Forever addon: **Vendor** and **Repair** buttons on your bag window. Click o
 
 - **EllesmereUI Bags**: in the header's icon row, left of the junk / bags / sort icons.
 - **Baganator**: in the backpack's bottom-left button row, through Baganator's own button API and styled by its skin.
-- **Blizzard bags**: on the outside edge of the bag window. `/vp side bottom | top | left | right` moves them.
+- **Blizzard bags**: combined bags get them left of the search box, under the portrait. Separate bags get them on the outside edge.
+
+`/vp side bottom | top | left | right` moves them to the outside edge of any bag window; `/vp side inside` puts them back.
 
 They show and hide with the bags. A floating frame with the same two buttons is there too if you want it (`/vp frame`).
 
@@ -22,7 +24,7 @@ They show and hide with the bags. A floating frame with the same two buttons is 
 | Command | What it does |
 | --- | --- |
 | `/vp vendor`, `/vp repair` | Pin the nearest (for macros) |
-| `/vp side header \| bottom \| top \| left \| right` | Where the bag buttons sit (`header` = EllesmereUI's header row) |
+| `/vp side inside \| bottom \| top \| left \| right` | Where the bag buttons sit (`inside` = in the window where there's a spot) |
 | `/vp frame` | Show or hide the floating frame |
 | `/vp lock`, `/vp unlock`, `/vp reset` | Floating frame position |
 
