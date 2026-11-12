@@ -36,6 +36,29 @@ local function ForMyFaction(f)
   return true
 end
 
+-- Hostility from the NPC's faction template: QuestieDB ships the game's FactionTemplate
+-- EnemyGroup masks (1 = players, 2 = Alliance, 4 = Horde, 8 = monsters).
+local function QuestieFactionTemplates()
+  local loader = QuestieLoader
+  if not (loader and loader.ImportModule) then return nil end
+  local ok, qdb = pcall(loader.ImportModule, loader, "QuestieDB")
+  return ok and type(qdb) == "table" and type(qdb.factionTemplate) == "table" and qdb.factionTemplate or nil
+end
+
+-- Friendly to this character? friendlyToFaction ("A", "H", "AH") decides when Questie has it.
+-- Without it, the faction template's enemy mask does: hostile to players or to our side = out.
+-- An NPC with neither is kept, as Questie's own townsfolk map does.
+local function FriendlyNpc(id, templates, myMask)
+  local f = NpcDB.friendlyToFaction and NpcDB.friendlyToFaction(id)
+  if f then return ForMyFaction(f) end
+  local fid = templates and NpcDB.factionID and NpcDB.factionID(id)
+  local enemies = fid and templates[fid]
+  if type(enemies) == "number" and myMask then
+    return bit.band(enemies, 1 + myMask) == 0
+  end
+  return true
+end
+
 local function WorldPos(uiMapID, x, y)
   if not (C_Map and C_Map.GetWorldPosFromMapPos and CreateVector2D) then return nil end
   local ok, cont, pos = pcall(C_Map.GetWorldPosFromMapPos, uiMapID, CreateVector2D(x / 100, y / 100))
@@ -97,6 +120,9 @@ local function Build(done)
   for _, k in ipairs(KINDS) do masks[k.key] = flags[k.flag] end
   local out = { vendor = {}, repair = {} }
   local ids = NpcDB.GetAllIds()
+  local templates = QuestieFactionTemplates()
+  local mine = UnitFactionGroup("player")
+  local myMask = (mine == "Alliance" and 2) or (mine == "Horde" and 4) or nil
   building = true
 
   local co = coroutine.create(function()
@@ -109,7 +135,7 @@ local function Build(done)
         if isVendor or isRepair then
           local name = NpcDB.name(id)
           if type(name) == "string" and name ~= "" and name:sub(1, 5) ~= "[DND]"
-            and ForMyFaction(NpcDB.friendlyToFaction and NpcDB.friendlyToFaction(id)) then
+            and FriendlyNpc(id, templates, myMask) then
             local spawns = NpcDB.spawns(id)
             if type(spawns) == "table" then
               for areaId, spots in pairs(spawns) do

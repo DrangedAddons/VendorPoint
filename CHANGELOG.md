@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.1
+
+- Stricter faction check. NPCs Questie doesn't tag Alliance or Horde used to count as friendly. Their faction template (the game's own hostility data, shipped with QuestieDB) now decides: anything hostile to players or to your side is skipped. Neutral NPCs, like goblin vendors, still count.
+
 ## 1.1.0
 
 - Blizzard's combined bags: the buttons now sit inside the window, left of the search box under the portrait. They shrink to fit the room the search box leaves.

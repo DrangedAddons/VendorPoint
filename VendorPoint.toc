@@ -2,7 +2,7 @@
 ## Title: VendorPoint
 ## Notes: Vendor and Repair icons on your bag window (EllesmereUI, Baganator or Blizzard) that pin the nearest one, named, on the map (and in WaypointUI). NPC locations come from Questie.
 ## Author: Dranged
-## Version: 1.1.0
+## Version: 1.1.1
 ## OptionalDeps: Questie, QuestieDB, WaypointUI, EllesmereUIBags, Baganator
 ## X-DrangedAddons-Games: _forever_
 ## SavedVariablesPerCharacter: VendorPointCharDB
