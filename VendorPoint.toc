@@ -5,6 +5,7 @@
 ## Version: 1.2.0
 ## OptionalDeps: Questie, QuestieDB, WaypointUI, EllesmereUIBags, Baganator
 ## X-DrangedAddons-Games: _forever_
+## X-DrangedHub-Actions: Nearest vendor=/vp vendor [keep]; Nearest repair=/vp repair [keep]; Floating frame=/vp frame [keep]
 ## SavedVariables: VendorPointDB
 ## SavedVariablesPerCharacter: VendorPointCharDB
 ## IconTexture: Interface\AddOns\VendorPoint\icon
